@@ -1,0 +1,75 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one deployment at a time; let in-flight runs finish instead of racing.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        env:
+          # GitHub Pages project sites are served from /<repo-name>/, not the
+          # domain root, so the base path has to match whatever this repo is
+          # actually named — computed automatically, no manual editing needed.
+          VITE_BASE_PATH: /${{ github.event.repository.name }}/
+          # Set these under Settings → Secrets and variables → Actions →
+          # New repository secret (see README). The Supabase "publishable"
+          # key is safe to expose publicly by design — it's not a secret in
+          # the security sense, this is just how the build gets it.
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+          VITE_SUPABASE_PROJECT_ID: ${{ secrets.VITE_SUPABASE_PROJECT_ID }}
+        run: npm run build
+
+      - name: Prepare static output for GitHub Pages
+        # SPA mode prerenders one shell file (_shell.html) that hydrates into
+        # the full app. Reuse it as index.html (the site root) and 404.html
+        # (GitHub Pages' catch-all for any other URL, e.g. a refresh on
+        # /dashboard) so client-side routing can take over either way.
+        run: |
+          cp .output/public/_shell.html .output/public/index.html
+          cp .output/public/_shell.html .output/public/404.html
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: .output/public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
